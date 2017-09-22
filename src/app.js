@@ -1,4 +1,5 @@
 import _ from 'lodash';
+import rp from 'request-promise-native';
 
 // s3 structure
 // config
@@ -58,6 +59,70 @@ module.exports.trigger_job = (event, context, cb) => {
   //     {id:1,etagFile: etags/etag1.jsob },{id:2,etagFile: etags/etag2.jsob } 
   //   ]
   // }
+
+  const jobBucket = _.get(event, 'stageVariables.job_bucket');
+  const fileBucket = _.get(event, 'stageVariables.file_bucket');
+  const jobPrefix = _.get(event, 'stageVariables.job_prefix');
+  const subjobPrefix = _.get(event, 'stageVariables.subjob_prefix');
+  const etagPrefix = _.get(event, 'stageVariables.etag_prefix');
+  const jobConfig = JSON.parse(event.body);
+  console.log('request body');
+  console.log(jobConfig);
+
+  if (!_.has(jobConfig, 'url')) {
+    cb(null, { statusCode: 400, body: 'can not find download url' });
+    console.log('can not find download url');
+    return false;
+  }
+
+  if (!_.has(jobConfig, 'name')) {
+    cb(null, { statusCode: 400, body: 'can not find file name' });
+    console.log('can not find file name');
+    return false;
+  }
+
+  const option = {
+    method: 'GET',
+    jobConfig.url,
+    headers: {
+      Range: 'bytes=0-',
+    },
+  };
+
+  rp(option).then((events) => {
+    console.log(events);
+    const length = parseInt(events.headers['content-length']);
+    const ranges = generateRages(length,1024*1024*2)
+    createMultipartUpload(file_bucket,name).then((info)=>{
+      const configs = ranges.map(x=>{
+        return {
+          number: x.number,
+          url: jobConfig.url,
+          range: x.range,
+          name: jobConfig.name,
+          etagFile: etagPrefix+'etag'+x.number+'.json',
+          bucket: fileBucket,
+          uploadId: info.uploadId
+        }
+      }) 
+
+      const monitorConfig = {
+        bucket: fileBucket,
+        name: jobConfig.name,
+        parts: configs.map(x=>{
+          return {
+            x.number,
+            x.etagFile
+          }
+        })
+      }
+
+      return saveJobConfig(configs,monitorConfig,jobBucket,jobPrefix,subjobPrefix)
+    })
+  }).catch((err)=>{
+    console.log("Failed to create job for "+jobConfig.url+" "+ err)
+    cb(null, { statusCode: 500, body: err });
+  });
 
 };
 
