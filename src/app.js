@@ -1,5 +1,14 @@
 import _ from 'lodash';
 import rp from 'request-promise-native';
+import { readObjectFromS3,
+  writeObjectToS3,
+  listFilesInS3,
+  readAllObjectFromS3,
+  completeMultipartUpload,
+  createMultipartUpload,
+  uploadPart,
+} from './api';
+import { generateRages } from './util';
 
 // s3 structure
 // config
@@ -90,9 +99,9 @@ module.exports.trigger_job = (event, context, cb) => {
 
   rp(option).then((events) => {
     console.log(events);
-    const length = parseInt(events.headers['content-length']);
+    const length = parseInt(events.headers['content-length'], 10);
     const ranges = generateRages(length, 1024 * 1024 * 2);
-    createMultipartUpload(file_bucket, name).then((info) => {
+    createMultipartUpload(fileBucket, jobConfig.name).then((info) => {
       const configs = ranges.map(x => ({
         number: x.number,
         url: jobConfig.url,
@@ -109,7 +118,10 @@ module.exports.trigger_job = (event, context, cb) => {
         parts: configs.map(x => x.etagFile),
       };
 
-      return saveJobConfig(configs, monitorConfig, jobBucket, jobPrefix, subjobPrefix);
+      return Promise.all([
+        writeObjectToS3(jobBucket, jobPrefix, monitorConfig),
+        writeObjectToS3(jobBucket, subjobPrefix, configs),
+      ]);
     });
   }).catch((err) => {
     console.log(`Failed to create job for ${jobConfig.url} ${err}`);
@@ -136,7 +148,7 @@ module.exports.download = (event, context, cb) => {
   const record = JSON.parse(event.Records[0].s3);
   const bucket = record.bucket.name;
   const key = record.object.key;
-  getDataFromS3(bucket, key).then((data) => {
+  readObjectFromS3(bucket, key).then((data) => {
     const option = {
       method: 'GET',
       url: data.url,
@@ -144,14 +156,20 @@ module.exports.download = (event, context, cb) => {
         Range: data.range,
       },
     };
-    return rp(option).then(fileData => uploadParts(data.bucket, data.name, data.uploadId, data.number, fileData).then((info) => {
-      console.log(`success to upload part ${data.number}`);
-      return saveDataToS3(bucket, data.etagFile, { number: data.number, etag: info.etag });
-    })).catch((err) => {
-      console.log(err);
-      console.log('Failed to download part data, will rewrite data and trigger again');
-      saveDataToS3(bucket, key, data);
-    });
+    return rp(option)
+      .then(fileData =>
+        uploadPart(data.bucket, data.name, data.uploadId, data.number, fileData)
+          .then((info) => {
+            console.log(`success to upload part ${data.number}`);
+            return writeObjectToS3(bucket,
+              data.etagFile,
+              { PartNumber: data.number, Etag: info.etag });
+          }))
+      .catch((err) => {
+        console.log(err);
+        console.log('Failed to download part data, will rewrite data and trigger again');
+        writeObjectToS3(bucket, key, data);
+      });
   }).catch((err) => {
     console.log(`Failed to download part ${key}`);
     console.log(`error message ${err}`);
@@ -165,17 +183,24 @@ module.exports.check_then_complete = (event, context, cb) => {
   //       send complete multipart upload to s3 then delete this config
   //    else
   //       ignore this job
-  getAllFilesInFolder(jobBucket, jobPrefix).then(files => Promise.all(
+  const jobBucket = _.get(event, 'stageVariables.job_bucket');
+  const fileBucket = _.get(event, 'stageVariables.job_bucket');
+  const jobPrefix = _.get(event, 'stageVariables.job_prefix');
+  listFilesInS3(jobBucket, jobPrefix).then(files => Promise.all(
        _.map(files, (file) => {
-         getDataFromS3(jobBucket, file).then((data) => {
-           getAllDataFromS3(jobBucket, data.parts).then(partEtags => completeMultipartUpload(fileBucket, data.uploadId, data.name, partEtags)).catch((err) => {
+         readObjectFromS3(jobBucket, file)
+           .then(data =>
+             readAllObjectFromS3(jobBucket, data.parts)
+               .then(partEtags =>
+                 completeMultipartUpload(fileBucket, data.uploadId, data.name, partEtags))
+               .catch((err) => {
+                 console.log(err);
+                 console.log(`The job ${data.name} is still in progress`);
+               }))
+           .catch((err) => {
              console.log(err);
-             console.log(`The job ${data.name} is still in progress`);
+             console.log(`Failed to process job ${file}`);
            });
-         }).catch((err) => {
-           console.log(err);
-           console.log(`Failed to process job ${file}`);
-         });
        }),
        ));
 };
