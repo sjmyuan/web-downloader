@@ -54,29 +54,29 @@ const listFilesInS3 = (bucket, prefix) => {
   return s3.listObjects(params).promise().then(data => _.map(data.Contents, ele => ele.Key));
 };
 
-const createMultipartUpload(bucket,key) =>{
+const createMultipartUpload = (bucket, key) => {
   const s3 = new AWS.S3();
   const params = {
     Bucket: bucket,
     Key: key,
   };
   return s3.createMultipartUpload(params).promise();
-}
+};
 
-const completeMultipartUpload(bucket,key,uploadId,parts) =>{
+const completeMultipartUpload = (bucket, key, uploadId, parts) => {
   const s3 = new AWS.S3();
   const params = {
     Bucket: bucket,
     Key: key,
     MultipartUpload: {
-      Parts: parts
+      Parts: parts,
     },
     UploadId: uploadId,
   };
   return s3.completeMultipartUpload(params).promise();
-}
+};
 
-const abortMultipartUpload(bucket,key,uploadId) =>{
+const abortMultipartUpload = (bucket, key, uploadId) => {
   const s3 = new AWS.S3();
   const params = {
     Bucket: bucket,
@@ -84,9 +84,9 @@ const abortMultipartUpload(bucket,key,uploadId) =>{
     UploadId: uploadId,
   };
   return s3.abortMultipartUpload(params).promise();
-}
+};
 
-const uploadPart(bucket,key,uploadId,partNumber,data) =>{
+const uploadPart = (bucket, key, uploadId, partNumber, data) => {
   const s3 = new AWS.S3();
   const params = {
     Bucket: bucket,
@@ -96,7 +96,7 @@ const uploadPart(bucket,key,uploadId,partNumber,data) =>{
     Body: data,
   };
   return s3.uploadPart(params).promise();
-}
+};
 
 export {
   readObjectFromS3,

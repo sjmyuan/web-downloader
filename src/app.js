@@ -73,6 +73,7 @@ module.exports.trigger_job = (event, context, cb) => {
   const jobPrefix = _.get(event, 'stageVariables.job_prefix');
   const subjobPrefix = _.get(event, 'stageVariables.subjob_prefix');
   const etagPrefix = _.get(event, 'stageVariables.etag_prefix');
+  const frameSize = _.parseInt(_.get(event, 'stageVariables.frame_size'));
   const jobConfig = JSON.parse(event.body);
   console.log('request body');
   console.log(jobConfig);
@@ -90,18 +91,19 @@ module.exports.trigger_job = (event, context, cb) => {
   }
 
   const option = {
-    method: 'GET',
+    method: 'HEAD',
     url: jobConfig.url,
-    headers: {
-      Range: 'bytes=0-',
-    },
   };
 
   rp(option).then((events) => {
     console.log(events);
-    const length = parseInt(events.headers['content-length'], 10);
-    const ranges = generateRages(length, 1024 * 1024 * 2);
-    createMultipartUpload(fileBucket, jobConfig.name).then((info) => {
+    const rangeType = _.get(events, 'accept-ranges', '');
+    if (rangeType !== 'bytes') {
+      return Promise.reject(`${jobConfig.url} does not support range request`);
+    }
+    const length = _.parseInt(events.headers['content-length'], 10);
+    const ranges = generateRages(length, frameSize);
+    return createMultipartUpload(fileBucket, jobConfig.name).then((info) => {
       const configs = ranges.map(x => ({
         number: x.number,
         url: jobConfig.url,
@@ -152,13 +154,14 @@ module.exports.download = (event, context, cb) => {
     const option = {
       method: 'GET',
       url: data.url,
+      encoding: null,
       headers: {
         Range: data.range,
       },
     };
     return rp(option)
       .then(fileData =>
-        uploadPart(data.bucket, data.name, data.uploadId, data.number, fileData)
+        uploadPart(data.bucket, data.name, data.uploadId, data.number, Buffer.from(fileData, 'utf8'))
           .then((info) => {
             console.log(`success to upload part ${data.number}`);
             return writeObjectToS3(bucket,

@@ -8,7 +8,7 @@ const generateRages = (length, size) => {
   const indexs = _.range(1, startIndexs.length + 1);
   return _.zipWith(indexs, startIndexs, endIndexs, (x, y, z) => ({
     number: x,
-    range: `bytes=${y}-${z}/${length}`,
+    range: `bytes=${y}-${z}`,
   }));
 };
 

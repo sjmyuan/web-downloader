@@ -1,20 +1,22 @@
 service: web-downloader
 
 custom:
-  host_zone: ''
-  custom_domain: ''
-  certificate_arn: ''
-  job_bucket: "web-downloader"
-  file_bucket: ""
+  host_zone: 'shangjiaming.com.'
+  custom_domain: 'downloader.shangjiaming.com'
+  certificate_arn: 'arn:aws:acm:us-east-1:851236638881:certificate/6815d229-f240-4582-9471-c587393a91e1'
+  job_bucket: "sjmyuan-web-downloader-stg"
+  file_bucket: "sjmyuan-video"
   job_prefix: "job"
   subjob_prefix: "subjob"
   etag_prefix: "etags"
+  frame_size: 2097152
   stageVariables:
     job_bucket: {self:custom.job_bucket}
     file_bucket: {self:custom.file_bucket}
     job_prefix: {self:custom.job_prefix}
     subjob_prefix: {self:custom.subjob_prefix}
     etag_prefix: {self:custom.etag_prefix}
+    frame_size: {self:custom.frame_size}
 
 provider:
   name: aws
@@ -51,7 +53,7 @@ functions:
       etag_prefix: {self:custom.etag_prefix}
     events:
       - s3:
-        bucket: {self:custom.job_bucket}
+          bucket: {self:custom.job_bucket}
           event: s3:ObjectCreated:*
           rules:
             - prefix: ${self:custom.subjob_prefix}
@@ -66,7 +68,7 @@ functions:
       subjob_prefix: {self:custom.subjob_prefix}
       etag_prefix: {self:custom.etag_prefix}
     events:
-      - schedule: rate(5 minutes)
+      - schedule: rate(60 minutes)
 resources:
   Resources:
     myDomainName:
