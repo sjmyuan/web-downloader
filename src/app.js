@@ -6,7 +6,10 @@ import { readObjectFromS3,
   readAllObjectFromS3,
   completeMultipartUpload,
   createMultipartUpload,
+  abortMultipartUpload,
   uploadPart,
+  deleteObjectInS3,
+  deleteAllObjectInS3,
 } from './api';
 import { generateRages } from './util';
 
@@ -185,12 +188,18 @@ module.exports.download = (event, context, cb) => {
             console.log(info);
             return writeObjectToS3(bucket,
               data.etagFile,
-              { PartNumber: data.number, ETag: info.ETag });
+              {
+                PartNumber: data.number,
+                ETag: info.ETag,
+              },
+            ).then(() => {
+              console.log(`Success to download${data.name}`);
+              return deleteObjectInS3(bucket, key);
+            });
           }))
       .catch((err) => {
         console.log(err);
         console.log('Failed to download part data, will rewrite data and trigger again');
-        writeObjectToS3(bucket, key, data);
       });
   }).catch((err) => {
     console.log(`Failed to download part ${key}`);
@@ -218,7 +227,17 @@ module.exports.check_then_complete = (event, context, cb) => {
                 console.log(data);
                 return readAllObjectFromS3(jobBucket, data.parts)
                   .then(partEtags =>
-                    completeMultipartUpload(fileBucket, data.uploadId, data.name, partEtags))
+                    completeMultipartUpload(fileBucket, data.name, data.uploadId, partEtags)
+                    .then(() => {
+                      console.log(`Success to download ${data.name}`);
+                      return deleteAllObjectInS3(jobBucket, [...data.parts, file]);
+                    })
+                    .catch((err) => {
+                      console.log(err);
+                      console.log('There are some error when complete download');
+                      return abortMultipartUpload(fileBucket, data.name, data.uploadId);
+                    }),
+                  )
                   .catch((err) => {
                     console.log(err);
                     console.log(`The job ${data.name} is still in progress`);

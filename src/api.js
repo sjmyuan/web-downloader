@@ -34,6 +34,17 @@ const writeObjectToS3 = (bucket, key, obj) => {
   return s3.putObject(putParams).promise();
 };
 
+const deleteObjectInS3 = (bucket, key) => {
+  const s3 = new AWS.S3();
+  const putParams = {
+    Bucket: bucket,
+    Key: key,
+  };
+  return s3.deleteObject(putParams).promise();
+};
+
+const deleteAllObjectInS3 = (bucket, keys) => Promise.all(_.map(keys, key => deleteObjectInS3(bucket, key)));
+
 const listFoldersInS3 = (bucket, prefix) => {
   const s3 = new AWS.S3();
   const params = {
@@ -109,4 +120,6 @@ export {
   completeMultipartUpload,
   abortMultipartUpload,
   uploadPart,
+  deleteObjectInS3,
+  deleteAllObjectInS3,
 };

@@ -9,7 +9,7 @@ custom:
   job_prefix: "job/"
   subjob_prefix: "subjob/"
   etag_prefix: "etags/"
-  frame_size: 2097152
+  frame_size: 5242880
   stageVariables:
     job_bucket: ${self:custom.job_bucket}
     file_bucket: ${self:custom.file_bucket}
@@ -30,6 +30,7 @@ provider:
         - "s3:ListBucket"
         - "s3:Put*"
         - "s3:GetObject"
+        - "s3:DeleteObject"
       Resource: "*"
 
 functions:
@@ -68,9 +69,18 @@ functions:
       subjob_prefix: ${self:custom.subjob_prefix}
       etag_prefix: ${self:custom.etag_prefix}
     events:
-      - schedule: rate(2 minutes)
+      - schedule: rate(5 minutes)
 resources:
   Resources:
+    TriggerUnderscorejobLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    DownloadLogGroup:
+      Properties:
+        RetentionInDays: "1"
+    CheckUnderscorethenUnderscorecompleteLogGroup:
+      Properties:
+        RetentionInDays: "1"
     myDomainName:
       Type: AWS::ApiGateway::DomainName
       Properties:
