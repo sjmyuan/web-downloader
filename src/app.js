@@ -98,10 +98,11 @@ module.exports.trigger_job = (event, context, cb) => {
   rp(option).then((events) => {
     console.log(events);
     const rangeType = _.get(events, 'accept-ranges', '');
+    const contentLength = _.get(events, 'content-length', '-1');
     if (rangeType !== 'bytes') {
       return Promise.reject(`${jobConfig.url} does not support range request`);
     }
-    const length = _.parseInt(events.headers['content-length'], 10);
+    const length = _.parseInt(contentLength, 10);
     const ranges = generateRages(length, frameSize);
     return createMultipartUpload(fileBucket, jobConfig.name).then((info) => {
       const configs = ranges.map(x => ({
@@ -109,21 +110,31 @@ module.exports.trigger_job = (event, context, cb) => {
         url: jobConfig.url,
         range: x.range,
         name: jobConfig.name,
-        etagFile: `${etagPrefix}etag${x.number}.json`,
+        etagFile: `${etagPrefix}${jobConfig.name}/etag${x.number}.json`,
         bucket: fileBucket,
-        uploadId: info.uploadId,
+        uploadId: info.UploadId,
       }));
 
       const monitorConfig = {
         bucket: fileBucket,
         name: jobConfig.name,
         parts: configs.map(x => x.etagFile),
+        uploadId: info.UploadId,
       };
 
+      console.log(configs);
+      console.log(monitorConfig);
+
       return Promise.all([
-        writeObjectToS3(jobBucket, jobPrefix, monitorConfig),
-        writeObjectToS3(jobBucket, subjobPrefix, configs),
-      ]);
+        writeObjectToS3(jobBucket, `${jobPrefix}${jobConfig.name}.json`, monitorConfig),
+        Promise.all(
+          _.map(configs, config =>
+            writeObjectToS3(jobBucket, `${subjobPrefix}${jobConfig.name}/job${config.number}.json`, config)),
+        ),
+      ]).then(() => {
+        console.log('Success to create job');
+        cb(null, { statusCode: 200, body: 'Success to create job' });
+      });
     });
   }).catch((err) => {
     console.log(`Failed to create job for ${jobConfig.url} ${err}`);
@@ -147,10 +158,17 @@ module.exports.download = (event, context, cb) => {
   // 3. upload multipart data to s3
   // 4. save etag to etagFile
   // 4. delete job config if success or rewrite the config to trigger another job
-  const record = JSON.parse(event.Records[0].s3);
+  console.log(event);
+  const record = event.Records[0].s3;
   const bucket = record.bucket.name;
   const key = record.object.key;
+  console.log('job info');
+  console.log(record);
+  console.log(bucket);
+  console.log(key);
   readObjectFromS3(bucket, key).then((data) => {
+    console.log('job detail');
+    console.log(data);
     const option = {
       method: 'GET',
       url: data.url,
@@ -164,9 +182,10 @@ module.exports.download = (event, context, cb) => {
         uploadPart(data.bucket, data.name, data.uploadId, data.number, Buffer.from(fileData, 'utf8'))
           .then((info) => {
             console.log(`success to upload part ${data.number}`);
+            console.log(info);
             return writeObjectToS3(bucket,
               data.etagFile,
-              { PartNumber: data.number, Etag: info.etag });
+              { PartNumber: data.number, ETag: info.ETag });
           }))
       .catch((err) => {
         console.log(err);
@@ -186,24 +205,34 @@ module.exports.check_then_complete = (event, context, cb) => {
   //       send complete multipart upload to s3 then delete this config
   //    else
   //       ignore this job
-  const jobBucket = _.get(event, 'stageVariables.job_bucket');
-  const fileBucket = _.get(event, 'stageVariables.job_bucket');
-  const jobPrefix = _.get(event, 'stageVariables.job_prefix');
-  listFilesInS3(jobBucket, jobPrefix).then(files => Promise.all(
-       _.map(files, (file) => {
-         readObjectFromS3(jobBucket, file)
-           .then(data =>
-             readAllObjectFromS3(jobBucket, data.parts)
-               .then(partEtags =>
-                 completeMultipartUpload(fileBucket, data.uploadId, data.name, partEtags))
-               .catch((err) => {
-                 console.log(err);
-                 console.log(`The job ${data.name} is still in progress`);
-               }))
-           .catch((err) => {
-             console.log(err);
-             console.log(`Failed to process job ${file}`);
-           });
-       }),
-       ));
+  const jobBucket = process.env.job_bucket;
+  const fileBucket = process.env.file_bucket;
+  const jobPrefix = process.env.job_prefix;
+  listFilesInS3(jobBucket, jobPrefix)
+    .then((files) => {
+      console.log(files);
+      return Promise.all(
+          _.map(files, (file) => {
+            readObjectFromS3(jobBucket, file)
+              .then((data) => {
+                console.log(data);
+                return readAllObjectFromS3(jobBucket, data.parts)
+                  .then(partEtags =>
+                    completeMultipartUpload(fileBucket, data.uploadId, data.name, partEtags))
+                  .catch((err) => {
+                    console.log(err);
+                    console.log(`The job ${data.name} is still in progress`);
+                  });
+              })
+              .catch((err) => {
+                console.log(err);
+                console.log(`Failed to process job ${file}`);
+              });
+          }),
+        );
+    })
+    .catch((err) => {
+      console.log(err);
+      console.log('There are some error when process jobs');
+    });
 };
