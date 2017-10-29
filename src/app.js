@@ -94,18 +94,25 @@ module.exports.trigger_job = (event, context, cb) => {
   }
 
   const option = {
-    method: 'HEAD',
+    method: 'GET',
     url: jobConfig.url,
+    headers: {
+      Range: 'bytes=0-1',
+    },
+    transform: (body, response, resolveWithFullResponse) => {
+      console.log(response);
+      const contentRange = _.get(response.headers, 'content-range');
+      if (!contentRange) {
+        throw new Error(`${jobConfig.url} does not support range request`);
+      }
+
+      return contentRange.split('/')[1];
+    },
   };
 
   rp(option).then((events) => {
     console.log(events);
-    const rangeType = _.get(events, 'accept-ranges', '');
-    const contentLength = _.get(events, 'content-length', '-1');
-    if (rangeType !== 'bytes') {
-      return Promise.reject(`${jobConfig.url} does not support range request`);
-    }
-    const length = _.parseInt(contentLength, 10);
+    const length = _.parseInt(events, 10);
     const ranges = generateRages(length, frameSize);
     return createMultipartUpload(fileBucket, jobConfig.name).then((info) => {
       const configs = ranges.map(x => ({
@@ -116,6 +123,7 @@ module.exports.trigger_job = (event, context, cb) => {
         etagFile: `${etagPrefix}${jobConfig.name}/etag${x.number}.json`,
         bucket: fileBucket,
         uploadId: info.UploadId,
+        tries: 0,
       }));
 
       const monitorConfig = {
@@ -123,6 +131,7 @@ module.exports.trigger_job = (event, context, cb) => {
         name: jobConfig.name,
         parts: configs.map(x => x.etagFile),
         uploadId: info.UploadId,
+        tries: 0,
       };
 
       console.log(configs);
@@ -155,6 +164,7 @@ module.exports.download = (event, context, cb) => {
   //   etagFile: etags/etag1.json
   //   bucket: video
   //   uploadId: info.uploadId
+  //   tries: 0
   // }
   //
   // 2. range request download data
@@ -172,6 +182,12 @@ module.exports.download = (event, context, cb) => {
   readObjectFromS3(bucket, key).then((data) => {
     console.log('job detail');
     console.log(data);
+
+    if (data.tries > 3) {
+      deleteObjectInS3(bucket, key);
+      return Promise.reject(`${data.name} has tried 3 times, the download failed, remove the job file ${key}`);
+    }
+
     const option = {
       method: 'GET',
       url: data.url,
@@ -200,6 +216,9 @@ module.exports.download = (event, context, cb) => {
       .catch((err) => {
         console.log(err);
         console.log('Failed to download part data, will rewrite data and trigger again');
+        const newData = _.cloneDeep(data);
+        newData.tries += 1;
+        return writeObjectToS3(bucket, key, newData);
       });
   }).catch((err) => {
     console.log(`Failed to download part ${key}`);
@@ -225,22 +244,26 @@ module.exports.check_then_complete = (event, context, cb) => {
             readObjectFromS3(jobBucket, file)
               .then((data) => {
                 console.log(data);
+                if (data.tries > 3) {
+                  deleteAllObjectInS3(jobBucket, [...data.parts, file]);
+                  abortMultipartUpload(fileBucket, data.name, data.uploadId);
+                  return Promise.reject(`${file} has tried 3 times, the job failed, remove the job related resource`);
+                }
+
                 return readAllObjectFromS3(jobBucket, data.parts)
                   .then(partEtags =>
                     completeMultipartUpload(fileBucket, data.name, data.uploadId, partEtags)
                     .then(() => {
                       console.log(`Success to download ${data.name}`);
-                      return deleteAllObjectInS3(jobBucket, [...data.parts, file]);
-                    })
-                    .catch((err) => {
-                      console.log(err);
-                      console.log('There are some error when complete download');
-                      return abortMultipartUpload(fileBucket, data.name, data.uploadId);
+                      deleteAllObjectInS3(jobBucket, [...data.parts, file]);
                     }),
                   )
                   .catch((err) => {
                     console.log(err);
                     console.log(`The job ${data.name} is still in progress`);
+                    const newData = _.cloneDeep(data);
+                    newData.tries += 1;
+                    return writeObjectToS3(jobBucket, file, newData);
                   });
               })
               .catch((err) => {

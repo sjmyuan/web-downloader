@@ -9,7 +9,7 @@ custom:
   job_prefix: "job/"
   subjob_prefix: "subjob/"
   etag_prefix: "etags/"
-  frame_size: 5242880
+  frame_size: 20971520
   stageVariables:
     job_bucket: ${self:custom.job_bucket}
     file_bucket: ${self:custom.file_bucket}
@@ -31,6 +31,7 @@ provider:
         - "s3:Put*"
         - "s3:GetObject"
         - "s3:DeleteObject"
+        - "s3:AbortMultipartUpload"
       Resource: "*"
 
 functions:
@@ -45,7 +46,7 @@ functions:
           private: false
   download:
     handler: app.download
-    timeout: 15
+    timeout: 300
     environment:
       job_bucket: ${self:custom.job_bucket}
       file_bucket: ${self:custom.file_bucket}
