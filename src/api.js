@@ -59,7 +59,6 @@ const listFilesInS3 = (bucket, prefix) => {
   const s3 = new AWS.S3();
   const params = {
     Bucket: bucket,
-    Delimiter: '/',
     Prefix: prefix,
   };
   return s3.listObjects(params).promise().then(data => _.map(data.Contents, ele => ele.Key));
